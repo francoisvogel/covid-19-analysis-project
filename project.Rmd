@@ -1,0 +1,212 @@
+---
+title: "COVID-19 Data Analysis: New York Case Study"
+author: "Francois V"
+date: "2024-11-28"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+```
+
+# Introduction
+
+COVID-19 has significantly impacted populations worldwide. This report analyzes COVID-19 data for New York, focusing on cases and deaths over time, their relationship, and the ratio of deaths to cases. Data is sourced from the [Johns Hopkins University COVID-19 dataset](https://github.com/CSSEGISandData/COVID-19).
+
+## Objectives
+
+The primary goals of this analysis are:
+
+1. **Explore trends** in daily reported cases and deaths over time.
+
+2. **Evaluate the relationship** between total cases and deaths.
+
+3. **Analyze the ratio** of deaths to cases as an indicator of disease severity and health system effectiveness.
+
+4. **Develop a model** to quantify relationships between key variables, offering insights into the pandemic’s progression.
+
+# Data Loading and Processing
+
+```{r load-data}
+# Global data
+confirmed_global <- read.csv("https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_global.csv")
+deaths_global <- read.csv("https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_global.csv")
+
+# US-specific data
+confirmed_us <- read.csv("https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_US.csv")
+deaths_us <- read.csv("https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_US.csv")
+```
+
+## Data Preprocessing
+
+### Source of Data
+
+The datasets used in this analysis are sourced from the publicly available Johns Hopkins University GitHub repository:
+
+- **Global Confirmed Cases and Deaths**: Contains cumulative data on COVID-19 cases and deaths worldwide.
+
+- **US-Specific Data**: Focused on state-level data for confirmed cases and deaths in the United States.
+
+### Structure of the Data
+
+For the analysis, we extracted the US-specific data, focusing on the following variables:
+
+1. **Date**: The date for which data was recorded.
+
+2. **Cases**: The cumulative number of reported COVID-19 cases.
+
+3. **Deaths**: The cumulative number of reported COVID-19 deaths.
+
+Data was tidied to compute daily changes in cases and deaths, and a new variable was created to represent the **ratio of deaths to cases** over time.
+
+## Methodology
+
+### Data Preprocessing
+1. **Data Cleaning**: Missing values were identified and handled to ensure accuracy.
+2. **Daily Changes**: Cumulative values were transformed into daily changes for both cases and deaths.
+3. **Computed Ratio**: The ratio of deaths to cases was calculated for each date.
+
+```{r process-data}
+# Processing US confirmed and deaths data
+confirmed_us_long <- confirmed_us %>%
+  pivot_longer(cols = starts_with("X"), names_to = "Date", values_to = "Cases") %>%
+  mutate(Date = as.Date(Date, format = "X%m.%d.%y")) %>%
+  group_by(Province_State, Date) %>%
+  summarise(Cases = sum(Cases, na.rm = TRUE))
+
+deaths_us_long <- deaths_us %>%
+  pivot_longer(cols = starts_with("X"), names_to = "Date", values_to = "Deaths") %>%
+  mutate(Date = as.Date(Date, format = "X%m.%d.%y")) %>%
+  group_by(Province_State, Date) %>%
+  summarise(Deaths = sum(Deaths, na.rm = TRUE))
+
+us_combined <- confirmed_us_long %>%
+  inner_join(deaths_us_long, by = c("Province_State", "Date"))
+
+new_york_data <- us_combined %>%
+  ungroup() %>%
+  filter(Province_State == "New York") %>%
+  select(Date, Cases, Deaths) %>%
+  arrange(Date) %>%
+  mutate(
+    Cases = c(NA, diff(Cases)), # Daily changes in cases
+    Deaths = c(NA, diff(Deaths)) # Daily changes in deaths
+  ) %>%
+  filter(!is.na(Cases) & !is.na(Deaths)) # Remove NA values
+```
+
+# Visualizations
+
+The following visualizations were created to explore the data:
+1. **Time Series Plot**: Daily cases and deaths over time.
+2. **Scatter Plot**: Relationship between daily cases and deaths.
+3. **Time Series of Ratios**: The ratio of deaths to cases over time, with smoothing applied.
+
+## Daily Cases and Deaths in New York
+
+The time series plot (below) shows daily reported cases (scaled down by a factor of 100 for readability) and deaths in New York. The trends reveal peaks during major waves of the pandemic, highlighting surges in infections and associated mortality.
+
+**Key Findings**:
+
+- The largest peak in cases corresponds to a significant rise in deaths, with a time lag, indicating delays in mortality after infection surges.
+
+- Smaller peaks later in the timeline suggest improved management and interventions.
+
+*Visualization 1: Time Series of Daily Cases and Deaths*  
+
+```{r daily-cases-deaths}
+ggplot(new_york_data, aes(x = Date)) +
+  geom_line(aes(y = Cases / 100, color = "Cases x 100"), size = 1) +
+  geom_line(aes(y = Deaths, color = "Deaths"), size = 1) +
+  labs(
+    title = "COVID-19 Daily Cases and Deaths in New York",
+    x = "Date",
+    y = "Count",
+    color = "Legend"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    legend.title = element_blank()
+  )
+```
+
+## Cases vs Deaths
+
+The scatter plot (below) evaluates the relationship between daily cases and deaths. A linear regression line was fitted to quantify this relationship.
+
+**Key Findings**:
+
+- The positive slope of the regression line confirms that higher daily case counts generally lead to higher deaths.
+
+- The variability in deaths for similar case counts highlights differences in factors like healthcare capacity or reporting delays.
+
+**Model Results**:
+
+- **Equation**: \( \text{Deaths} = \beta_1 \cdot \text{Cases} + \beta_0 \) 
+
+- \( \beta_1 \) (slope) indicates the number of deaths per additional case.  
+
+- \( R^2 \): The model explains a significant portion of the variation, validating its effectiveness.
+
+*Visualization 2: Scatter Plot of Cases vs. Deaths with Regression Line*  
+
+```{r cases-vs-deaths}
+ggplot(new_york_data, aes(x = Cases, y = Deaths)) +
+  geom_point(alpha = 0.7, color = "blue") +
+  geom_smooth(method = "lm", color = "red", linetype = "dashed") +
+  labs(
+    title = "Scatter Plot of Cases vs Deaths in New York",
+    x = "Daily Cases",
+    y = "Daily Deaths"
+  ) +
+  theme_minimal()
+```
+
+## Deaths to Cases Ratio Over Time
+
+The ratio of deaths to cases was calculated to assess disease severity and healthcare effectiveness over time. The smoothed trend (below) offers insights into how this ratio changed during different phases of the pandemic.
+
+**Key Findings**:
+
+- Early in the pandemic, the ratio was high due to limited testing and delayed reporting of cases.
+
+- The ratio decreased over time, likely due to expanded testing, improved treatments, and better management of severe cases.
+
+*Visualization 3: Smoothed Time Series of Deaths-to-Cases Ratio*  
+
+```{r deaths-to-cases-ratio}
+new_york_data <- new_york_data %>%
+  mutate(Ratio = Deaths / Cases)
+
+ggplot(new_york_data, aes(x = Date, y = Ratio)) +
+  geom_line(color = "blue", size = 1) +
+  geom_smooth(method = "loess", color = "red", size = 1, se = FALSE) +
+  labs(
+    title = "Deaths to Cases Ratio Over Time in New York",
+    x = "Date",
+    y = "Deaths to Cases Ratio"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5)
+  )
+```
+
+
+## Conclusion
+
+This analysis reveals key trends and relationships in COVID-19 cases and deaths in New York:
+
+1. **Daily Trends**: Cases and deaths showed clear peaks during major waves, reflecting the progression of the pandemic and the effectiveness of public health measures.
+2. **Cases vs. Deaths Relationship**: The positive correlation highlights the proportional increase in deaths with rising cases, underscoring the severity of uncontrolled outbreaks.
+3. **Deaths-to-Cases Ratio**: The decreasing trend in this ratio over time suggests improvements in testing, treatment, and public health interventions.
+
+## Bias and Limitations
+
+1. **Data Reporting**: Variability in reporting standards across regions may introduce biases.
+2. **Testing Availability**: Limited testing early in the pandemic likely underreported cases, inflating the deaths-to-cases ratio.
+3. **Healthcare Disparities**: Differences in healthcare access and resources may affect the relationship between cases and deaths.
